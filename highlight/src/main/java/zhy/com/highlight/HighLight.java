@@ -7,6 +7,7 @@ import android.graphics.RectF;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Message;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
@@ -26,6 +27,12 @@ import zhy.com.highlight.view.HightLightView;
  * Created by zhy on 15/10/8.
  */
 public class HighLight implements HighLightInterface, ViewTreeObserver.OnGlobalLayoutListener {
+
+    public class ViewPosGroup {
+        public List<ViewPosInfo> subRects;
+    }
+
+
     public static class ViewPosInfo {
         public int layoutId = -1;
         public RectF rectF;
@@ -44,6 +51,7 @@ public class HighLight implements HighLightInterface, ViewTreeObserver.OnGlobalL
         public float leftMargin;
         public float rightMargin;
         public float bottomMargin;
+        public int gravity = Gravity.NO_GRAVITY;
 
     }
 
@@ -52,8 +60,15 @@ public class HighLight implements HighLightInterface, ViewTreeObserver.OnGlobalL
     }
 
 
+    public class HighLightItem {
+        public int decorLayoutId;
+        public OnPosCallback onPosCallback;
+    }
+
+
     private View mAnchor;
-    private List<ViewPosInfo> mViewRects;
+    //    private List<ViewPosInfo> mViewRects;
+    private List<ViewPosGroup> mViewGroups;
     private Context mContext;
     private HightLightView mHightLightView;
     private HighLightInterface.OnClickCallback clickCallback;
@@ -61,6 +76,8 @@ public class HighLight implements HighLightInterface, ViewTreeObserver.OnGlobalL
     private boolean intercept = true;
     //    private boolean shadow = true;
     private int maskColor = 0xCC000000;
+
+    private boolean isClickNextBtn = false;
 
     //added by isanwenyu@163.com
     private boolean autoRemove = true;//点击是否自动移除 默认为true
@@ -81,7 +98,7 @@ public class HighLight implements HighLightInterface, ViewTreeObserver.OnGlobalL
 
     public HighLight(Context context) {
         mContext = context;
-        mViewRects = new ArrayList<ViewPosInfo>();
+        mViewGroups = new ArrayList<>();
         mAnchor = ((Activity) mContext).findViewById(android.R.id.content);
         mListenersHandler = new ListenersHandler(this);
         registerGlobalLayoutListener();
@@ -102,6 +119,12 @@ public class HighLight implements HighLightInterface, ViewTreeObserver.OnGlobalL
         this.intercept = intercept;
         return this;
     }
+
+    public HighLight isClickNextBtn(boolean isClickNextBtn) {
+        this.isClickNextBtn = isClickNextBtn;
+        return this;
+    }
+
 
 //    public HighLight shadow(boolean shadow)
 //    {
@@ -124,23 +147,31 @@ public class HighLight implements HighLightInterface, ViewTreeObserver.OnGlobalL
 
     public void updateInfo() {
         ViewGroup parent = (ViewGroup) mAnchor;
-        for (HighLight.ViewPosInfo viewPosInfo : mViewRects) {
+        if (mViewGroups != null && mViewGroups.size() > 0)
+            for (HighLight.ViewPosGroup group : mViewGroups) {
+                if (group.subRects != null && group.subRects.size() > 0)
+                    for (HighLight.ViewPosInfo viewPosInfo : group.subRects) {
 
-            RectF rect = new RectF(ViewUtils.getLocationInView(parent, viewPosInfo.view));
+                        RectF rect = new RectF(ViewUtils.getLocationInView(parent, viewPosInfo.view));
 //            if (!rect.equals(viewPosInfo.rectF))//TODO bug dismissed...fc...
-            {
-                viewPosInfo.rectF = rect;
-                viewPosInfo.onPosCallback.getPos(parent.getWidth() - rect.right, parent.getHeight() - rect.bottom, rect, viewPosInfo.marginInfo);
+                        {
+                            viewPosInfo.rectF = rect;
+                            viewPosInfo.onPosCallback.getPos(parent.getWidth() - rect.right, parent.getHeight() - rect.bottom, rect, viewPosInfo.marginInfo);
+                        }
+                    }
             }
-        }
+
 
     }
+
 
 
     public HighLight addHighLight(View view, int decorLayoutId, OnPosCallback onPosCallback, LightShape lightShape) {
         if (onPosCallback == null && decorLayoutId != -1) {
             throw new IllegalArgumentException("onPosCallback can not be null.");
         }
+        if (mViewGroups == null)
+            mViewGroups = new ArrayList<>();
         ViewGroup parent = (ViewGroup) mAnchor;
         RectF rect = new RectF(ViewUtils.getLocationInView(parent, view));
         //if RectF is empty return  added by isanwenyu 2016/10/26.
@@ -154,10 +185,49 @@ public class HighLight implements HighLightInterface, ViewTreeObserver.OnGlobalL
         viewPosInfo.marginInfo = marginInfo;
         viewPosInfo.onPosCallback = onPosCallback;
         viewPosInfo.lightShape = lightShape == null ? new RectLightShape() : lightShape;
-        mViewRects.add(viewPosInfo);
-
+        ViewPosGroup group;
+        if (isNext || mViewGroups.size()<=0){
+            group = new ViewPosGroup();
+            group.subRects = new ArrayList<>();
+            group.subRects.add(viewPosInfo);
+            mViewGroups.add(group);
+        }else {
+            group = mViewGroups.get(mViewGroups.size() -1);
+            group.subRects.add(viewPosInfo);
+        }
         return this;
     }
+
+
+    public HighLight addHighLightGroup(View view, List<HighLightItem> groupItems, LightShape lightShape) {
+        if (groupItems == null || groupItems.size() <= 0) {
+            throw new IllegalArgumentException("groupItems can not be null.");
+        }
+        ViewPosGroup group = new ViewPosGroup();
+        group.subRects = new ArrayList<>();
+        for (HighLightItem item : groupItems) {
+            if (item.onPosCallback == null && item.decorLayoutId != -1) {
+                throw new IllegalArgumentException("onPosCallback can not be null.");
+            }
+            ViewGroup parent = (ViewGroup) mAnchor;
+            RectF rect = new RectF(ViewUtils.getLocationInView(parent, view));
+            //if RectF is empty return  added by isanwenyu 2016/10/26.
+            if (rect.isEmpty()) return this;
+            ViewPosInfo viewPosInfo = new ViewPosInfo();
+            viewPosInfo.layoutId = item.decorLayoutId;
+            viewPosInfo.rectF = rect;
+            viewPosInfo.view = view;
+            MarginInfo marginInfo = new MarginInfo();
+            item.onPosCallback.getPos(parent.getWidth() - rect.right, parent.getHeight() - rect.bottom, rect, marginInfo);
+            viewPosInfo.marginInfo = marginInfo;
+            viewPosInfo.onPosCallback = item.onPosCallback;
+            viewPosInfo.lightShape = lightShape == null ? new RectLightShape() : lightShape;
+            group.subRects.add(viewPosInfo);
+        }
+        mViewGroups.add(group);
+        return this;
+    }
+
 
     // 一个场景可能有多个步骤的高亮。一个步骤完成之后再进行下一个步骤的高亮
     // 添加点击事件，将每次点击传给应用逻辑
@@ -199,9 +269,10 @@ public class HighLight implements HighLightInterface, ViewTreeObserver.OnGlobalL
 
     /**
      * 设置根布局mAnchor全局布局监听器
-     * @see #registerGlobalLayoutListener()
+     *
      * @param onLayoutCallback
      * @return
+     * @see #registerGlobalLayoutListener()
      */
     public HighLight setOnLayoutCallback(HighLightInterface.OnLayoutCallback onLayoutCallback) {
         if (onLayoutCallback != null) {
@@ -245,7 +316,7 @@ public class HighLight implements HighLightInterface, ViewTreeObserver.OnGlobalL
     @Override
     public HightLightView getHightLightView() {
         if (mHightLightView != null) return mHightLightView;
-        return mHightLightView = (HightLightView) ((Activity) mContext).findViewById(R.id.high_light_view);
+        return mHightLightView = ((Activity) mContext).findViewById(R.id.high_light_view);
 
     }
 
@@ -292,13 +363,13 @@ public class HighLight implements HighLightInterface, ViewTreeObserver.OnGlobalL
             mHightLightView = getHightLightView();
             //重置当前HighLight对象属性
             mShowing = true;
-            isNext = mHightLightView.isNext();
+//            isNext = mHightLightView.isNext();
             // TODO: 2016/11/16 按需重置其他属性
             return this;
         }
         //如果View rect 容器为空 直接返回 added by isanwenyu 2016/10/26.
-        if (mViewRects.isEmpty()) return this;
-        HightLightView hightLightView = new HightLightView(mContext, this, maskColor, mViewRects, isNext);
+        if (mViewGroups.isEmpty()) return this;
+        HightLightView hightLightView = new HightLightView(mContext, this, maskColor, mViewGroups, true);
         //add high light view unique id by isanwenyu@163.com  on 2016/9/28.
         hightLightView.setId(R.id.high_light_view);
         //compatible with AutoFrameLayout ect.
@@ -320,15 +391,24 @@ public class HighLight implements HighLightInterface, ViewTreeObserver.OnGlobalL
         }
 
         if (intercept) {
-            hightLightView.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
+            if (isClickNextBtn) {
+                hightLightView.setClickable(true);
+                hightLightView.setFocusable(true);
+                hightLightView.setNextBtnClick(view -> {
                     //added autoRemove by isanwenyu@163.com
                     if (autoRemove) remove();
 
                     sendClickMessage();
-                }
-            });
+                });
+            } else {
+                hightLightView.setOnClickListener(v -> {
+                    //added autoRemove by isanwenyu@163.com
+                    if (autoRemove) remove();
+
+                    sendClickMessage();
+                });
+            }
+
         }
         //延迟添加提示布局
         hightLightView.addViewForTip();
@@ -390,8 +470,8 @@ public class HighLight implements HighLightInterface, ViewTreeObserver.OnGlobalL
 
     public void sendNextMessage() {
 
-        if (!isNext)
-            throw new IllegalArgumentException("only for isNext mode,please invoke enableNext() first");
+//        if (!isNext)
+//            throw new IllegalArgumentException("only for isNext mode,please invoke enableNext() first");
 
         if (getHightLightView() == null) {
             return;
